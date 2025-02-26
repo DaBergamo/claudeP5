@@ -1,0 +1,714 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Black Hole Simulation</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background-color: #000;
+    }
+    .info {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      color: rgba(255, 255, 255, 0.7);
+      font-family: monospace;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="info">Click/Touch to add objects. Black hole mass: <span id="mass">10000</span></div>
+  <script>
+    let blackHole;
+    let particles = [];
+    let accretionDisk = [];
+    let stars = [];
+    let starDust = [];
+    let objectTypes = ["star", "starsystem", "galaxy", "stardust"];
+    
+    function setup() {
+      createCanvas(windowWidth, windowHeight);
+      
+      // Create black hole at center of screen
+      blackHole = new BlackHole(width / 2, height / 2, 30);
+      
+      // Create initial particles
+      for (let i = 0; i < 50; i++) {
+        createRandomParticle();
+      }
+      
+      // Create background stars
+      for (let i = 0; i < 200; i++) {
+        stars.push({
+          x: random(width),
+          y: random(height),
+          size: random(0.5, 2),
+          brightness: random(100, 255)
+        });
+      }
+      
+      // Create stardust
+      for (let i = 0; i < 300; i++) {
+        createStarDust(random(width), random(height));
+      }
+    }
+    
+    function draw() {
+      background(0, 0, 0);
+      
+      // Draw stars
+      drawStars();
+      
+      // Draw stardust
+      drawStarDust();
+      
+      // Draw accretion disk
+      drawAccretionDisk();
+      
+      // Draw event horizon
+      blackHole.show();
+      
+      // Update and draw particles
+      for (let i = particles.length - 1; i >= 0; i--) {
+        particles[i].update();
+        particles[i].show();
+        
+        // Check if particle is consumed by black hole
+        if (blackHole.consumes(particles[i])) {
+          // Add to accretion disk effects
+          addToAccretionDisk(particles[i]);
+          
+          // Increase black hole size and mass based on consumed object
+          let massGain = 0;
+          switch(particles[i].type) {
+            case "star":
+              massGain = particles[i].size * 10;
+              break;
+            case "starsystem":
+              massGain = particles[i].size * 50;
+              break;
+            case "galaxy":
+              massGain = particles[i].size * 200;
+              break;
+            case "stardust":
+              massGain = particles[i].size * 2;
+              break;
+          }
+          
+          blackHole.addMass(massGain);
+          document.getElementById("mass").textContent = Math.floor(blackHole.mass);
+          
+          // Remove the particle
+          particles.splice(i, 1);
+          // Create a new particle to replace it
+          createRandomParticle();
+        }
+      }
+      
+      // Occasionally add new particles
+      if (frameCount % 60 === 0 && random() > 0.5) {
+        createRandomParticle();
+      }
+      
+      // Update accretion disk
+      updateAccretionDisk();
+      
+      // Update stardust
+      updateStarDust();
+    }
+    
+    function mousePressed() {
+      createObjectAtPosition(mouseX, mouseY);
+      return false; // Prevent default behavior
+    }
+    
+    function touchStarted() {
+      createObjectAtPosition(touches[0].x, touches[0].y);
+      return false; // Prevent default behavior
+    }
+    
+    function createObjectAtPosition(x, y) {
+      // Don't create objects too close to the black hole
+      let distToBlackHole = dist(x, y, blackHole.pos.x, blackHole.pos.y);
+      if (distToBlackHole < blackHole.radius * 3) {
+        return;
+      }
+      
+      let objType = random(objectTypes);
+      if (objType === "stardust") {
+        // Create a cluster of stardust
+        for (let i = 0; i < 20; i++) {
+          let dustX = x + random(-50, 50);
+          let dustY = y + random(-50, 50);
+          createStarDust(dustX, dustY);
+        }
+      } else {
+        // Create a celestial object with random initial velocity
+        let p = new Particle(x, y, objType);
+        
+        // Calculate velocity vector (mostly perpendicular to black hole direction for orbital motion)
+        let toBlackHole = p5.Vector.sub(blackHole.pos, p.pos);
+        let dist = toBlackHole.mag();
+        let perpendicular = new p5.Vector(-toBlackHole.y, toBlackHole.x);
+        perpendicular.normalize();
+        
+        // Calculate orbital velocity (simplified physics)
+        let orbitSpeed = sqrt(blackHole.G * blackHole.mass / dist) * 0.8;
+        orbitSpeed *= random(0.5, 1.2);
+        
+        perpendicular.mult(orbitSpeed);
+        
+        // Add slight inward/outward component
+        toBlackHole.normalize();
+        toBlackHole.mult(orbitSpeed * random(-0.3, 0.3));
+        
+        p.vel = p5.Vector.add(perpendicular, toBlackHole);
+        particles.push(p);
+      }
+    }
+    
+    function createStarDust(x, y) {
+      starDust.push({
+        pos: createVector(x, y),
+        vel: createVector(random(-0.2, 0.2), random(-0.2, 0.2)),
+        acc: createVector(0, 0),
+        size: random(0.5, 1.5),
+        alpha: random(100, 200),
+        color: color(
+          random(180, 255),
+          random(180, 255),
+          random(200, 255)
+        )
+      });
+    }
+    
+    function updateStarDust() {
+      for (let i = starDust.length - 1; i >= 0; i--) {
+        let dust = starDust[i];
+        
+        // Calculate gravitational force from black hole
+        let toBlackHole = p5.Vector.sub(blackHole.pos, dust.pos);
+        let distance = toBlackHole.mag();
+        distance = constrain(distance, 5, 1000);
+        
+        let strength = (blackHole.G * blackHole.mass * 0.0001) / (distance * distance);
+        toBlackHole.normalize();
+        toBlackHole.mult(strength);
+        
+        // Apply force
+        dust.acc = toBlackHole.copy();
+        dust.vel.add(dust.acc);
+        dust.vel.limit(2); // Limit velocity
+        dust.pos.add(dust.vel);
+        
+        // Check if consumed by black hole
+        if (distance < blackHole.radius) {
+          // Add tiny amount of mass
+          blackHole.addMass(0.1);
+          // Remove the dust
+          starDust.splice(i, 1);
+          // Create new dust at a random position
+          createStarDust(random(width), random(height));
+        }
+      }
+    }
+    
+    function drawStarDust() {
+      for (let dust of starDust) {
+        // Calculate distance to black hole
+        let distToBlackHole = p5.Vector.dist(dust.pos, blackHole.pos);
+        
+        // Apply gravitational lensing effect
+        let lensingFactor = map(constrain(distToBlackHole, blackHole.radius * 2, width / 2), 
+                              blackHole.radius * 2, width / 2, 0.7, 1);
+        
+        // The closer to the black hole, the more distorted/streaked
+        let angle = atan2(dust.pos.y - blackHole.pos.y, dust.pos.x - blackHole.pos.x);
+        let shiftX = 0;
+        let shiftY = 0;
+        
+        if (distToBlackHole < width / 4) {
+          let shiftAmount = map(distToBlackHole, blackHole.radius * 2, width / 4, 4, 0);
+          shiftX = cos(angle + PI/2) * shiftAmount;
+          shiftY = sin(angle + PI/2) * shiftAmount;
+        }
+        
+        fill(red(dust.color), green(dust.color), blue(dust.color), dust.alpha * lensingFactor);
+        noStroke();
+        ellipse(dust.pos.x + shiftX, dust.pos.y + shiftY, dust.size);
+      }
+    }
+    
+    function drawStars() {
+      for (let star of stars) {
+        // Apply gravitational lensing effect
+        let distToBlackHole = dist(star.x, star.y, blackHole.pos.x, blackHole.pos.y);
+        let lensingFactor = map(constrain(distToBlackHole, blackHole.radius * 3, width / 2), 
+                              blackHole.radius * 3, width / 2, 0.7, 1);
+        
+        // The closer to the black hole, the more distorted/shifted
+        let angle = atan2(star.y - blackHole.pos.y, star.x - blackHole.pos.x);
+        let shiftX = 0;
+        let shiftY = 0;
+        
+        if (distToBlackHole < width / 3) {
+          let shiftAmount = map(distToBlackHole, blackHole.radius * 3, width / 3, 8, 0);
+          shiftX = cos(angle + PI/2) * shiftAmount;
+          shiftY = sin(angle + PI/2) * shiftAmount;
+        }
+        
+        fill(255, 255, 255, star.brightness * lensingFactor);
+        noStroke();
+        ellipse(star.x + shiftX, star.y + shiftY, star.size);
+      }
+    }
+    
+    function createRandomParticle() {
+      // Create particles at edges with velocity toward center
+      let angle = random(TWO_PI);
+      let distance = random(200, max(width, height) * 0.6);
+      let x = blackHole.pos.x + cos(angle) * distance;
+      let y = blackHole.pos.y + sin(angle) * distance;
+      
+      // Make sure it's on screen
+      x = constrain(x, 0, width);
+      y = constrain(y, 0, height);
+      
+      // Choose random object type
+      let objType = random(objectTypes.filter(t => t !== "stardust"));
+      
+      // Create with orbital velocity
+      let p = new Particle(x, y, objType);
+      
+      // Calculate a velocity that would put the particle in orbit
+      let toBlackHole = p5.Vector.sub(blackHole.pos, p.pos);
+      let dist = toBlackHole.mag();
+      let perpendicular = new p5.Vector(-toBlackHole.y, toBlackHole.x);
+      perpendicular.normalize();
+      
+      // Calculate orbital velocity (simplified physics)
+      let orbitSpeed = sqrt(blackHole.G * blackHole.mass / dist) * 0.8;
+      
+      // Add some randomness to make it more interesting
+      orbitSpeed *= random(0.5, 1.2);
+      
+      perpendicular.mult(orbitSpeed);
+      
+      // Add some radial velocity as well for more variety
+      toBlackHole.normalize();
+      toBlackHole.mult(orbitSpeed * random(-0.2, 0.2));
+      
+      p.vel = p5.Vector.add(perpendicular, toBlackHole);
+      
+      particles.push(p);
+    }
+    
+    function addToAccretionDisk(particle) {
+      // Add particles to accretion disk when they're consumed
+      let angle = atan2(particle.pos.y - blackHole.pos.y, particle.pos.x - blackHole.pos.x);
+      let speed = particle.vel.mag();
+      let particleColor = particle.color;
+      
+      // Create multiple particles for effect
+      let numParticles = 8;
+      if (particle.type === "starsystem") numParticles = 12;
+      if (particle.type === "galaxy") numParticles = 20;
+      
+      for (let i = 0; i < numParticles; i++) {
+        accretionDisk.push({
+          angle: angle + random(-0.1, 0.1),
+          distance: blackHole.radius * (1 + random(0.1, 2)),
+          lifetime: 60 + random(60),
+          age: 0,
+          color: particleColor,
+          speed: speed * random(0.1, 0.3),
+          type: particle.type
+        });
+      }
+    }
+    
+    function updateAccretionDisk() {
+      for (let i = accretionDisk.length - 1; i >= 0; i--) {
+        let particle = accretionDisk[i];
+        
+        // Update particle
+        particle.angle += particle.speed / particle.distance;
+        particle.distance = max(particle.distance * 0.99, blackHole.radius * 1.1);
+        particle.age++;
+        
+        // Remove old particles
+        if (particle.age > particle.lifetime) {
+          accretionDisk.splice(i, 1);
+        }
+      }
+    }
+    
+    function drawAccretionDisk() {
+      // Draw each particle in the accretion disk
+      for (let particle of accretionDisk) {
+        let x = blackHole.pos.x + cos(particle.angle) * particle.distance;
+        let y = blackHole.pos.y + sin(particle.angle) * particle.distance;
+        
+        let alpha = map(particle.age, 0, particle.lifetime, 200, 0);
+        let size = map(particle.age, 0, particle.lifetime, 5, 2);
+        
+        // Adjust size based on particle type
+        if (particle.type === "starsystem") size *= 1.3;
+        if (particle.type === "galaxy") size *= 1.8;
+        
+        // Extract color components
+        let c = color(particle.color);
+        let r = red(c);
+        let g = green(c);
+        let b = blue(c);
+        
+        // Modified color based on how close to black hole
+        let proximity = constrain(map(particle.distance, blackHole.radius, blackHole.radius * 3, 1, 0), 0, 1);
+        let finalColor = color(
+          lerp(r, 255, proximity * 0.8),
+          lerp(g, 100, proximity * 0.6),
+          lerp(b, 50, proximity * 0.3),
+          alpha
+        );
+        
+        fill(finalColor);
+        noStroke();
+        ellipse(x, y, size);
+        
+        // Add a glow effect
+        for (let i = 0; i < 3; i++) {
+          let glowSize = size * (1 + i * 0.5);
+          fill(r, g, b, alpha / (i + 2));
+          ellipse(x, y, glowSize);
+        }
+      }
+    }
+    
+    class BlackHole {
+      constructor(x, y, radius) {
+        this.pos = createVector(x, y);
+        this.radius = radius;
+        this.mass = 10000;
+        this.G = 0.5; // Gravitational constant (adjusted for simulation)
+        this.eventHorizonRadius = this.radius;
+        this.photonSphereRadius = this.radius * 1.5;
+        this.growthFactor = 0.0005; // How much the radius grows per unit of mass
+        this.lastGrowth = 0; // For animation
+        this.pulseSize = 0; // For growth pulse effect
+      }
+      
+      addMass(amount) {
+        this.mass += amount;
+        let oldRadius = this.radius;
+        this.radius = 30 + (this.mass - 10000) * this.growthFactor;
+        this.eventHorizonRadius = this.radius;
+        this.photonSphereRadius = this.radius * 1.5;
+        
+        // Initiate pulse effect
+        this.lastGrowth = frameCount;
+        this.pulseSize = amount * 0.05;
+      }
+      
+      show() {
+        // Calculate pulse effect
+        let pulse = 0;
+        if (frameCount - this.lastGrowth < 20) {
+          pulse = map(frameCount - this.lastGrowth, 0, 20, this.pulseSize, 0);
+        }
+        
+        // Draw photon sphere (the glow around black hole)
+        let photonSphereGradient = 100;
+        for (let i = 0; i < photonSphereGradient; i++) {
+          let alpha = map(i, 0, photonSphereGradient, 100, 0);
+          let size = map(i, 0, photonSphereGradient, this.photonSphereRadius, this.photonSphereRadius * 2);
+          fill(100, 150, 255, alpha);
+          noStroke();
+          ellipse(this.pos.x, this.pos.y, size + pulse);
+        }
+        
+        // Draw event horizon (black circle)
+        fill(0);
+        stroke(30, 30, 70);
+        strokeWeight(2);
+        ellipse(this.pos.x, this.pos.y, this.eventHorizonRadius * 2 + pulse);
+        
+        // Draw small inner glow
+        for (let i = 0; i < 5; i++) {
+          let alpha = map(i, 0, 5, 50, 0);
+          fill(70, 70, 150, alpha);
+          noStroke();
+          ellipse(this.pos.x, this.pos.y, this.eventHorizonRadius * (1 + i * 0.1) + pulse);
+        }
+        
+        // If recently grown, add shockwave effect
+        if (frameCount - this.lastGrowth < 30 && this.pulseSize > 0) {
+          noFill();
+          strokeWeight(2);
+          let waveProgress = map(frameCount - this.lastGrowth, 0, 30, 0, 1);
+          let waveSize = map(waveProgress, 0, 1, this.radius * 2, this.radius * 6);
+          let waveAlpha = map(waveProgress, 0, 1, 255, 0);
+          stroke(100, 150, 255, waveAlpha);
+          ellipse(this.pos.x, this.pos.y, waveSize);
+          
+          // Inner bright flash
+          if (frameCount - this.lastGrowth < 10) {
+            let flashAlpha = map(frameCount - this.lastGrowth, 0, 10, 150, 0);
+            fill(255, 255, 200, flashAlpha);
+            noStroke();
+            ellipse(this.pos.x, this.pos.y, this.radius * 3);
+          }
+        }
+      }
+      
+      attract(particle) {
+        // Calculate gravitational force
+        let force = p5.Vector.sub(this.pos, particle.pos);
+        let distance = force.mag();
+        distance = constrain(distance, 5, 1000);
+        
+        let strength = (this.G * this.mass) / (distance * distance);
+        force.normalize();
+        force.mult(strength);
+        
+        // Apply force to particle
+        particle.applyForce(force);
+      }
+      
+      consumes(particle) {
+        return p5.Vector.dist(this.pos, particle.pos) < this.eventHorizonRadius;
+      }
+    }
+    
+    class Particle {
+      constructor(x, y, type = "star") {
+        this.pos = createVector(x, y);
+        this.vel = createVector(0, 0);
+        this.acc = createVector(0, 0);
+        this.type = type;
+        
+        // Set size and color based on type
+        switch(this.type) {
+          case "star":
+            this.size = random(2, 6);
+            // Generate a random color, favoring blue, green and white
+            let colorChoice = random(10);
+            if (colorChoice > 7) {
+              // White/yellow star
+              this.color = color(255, 255, random(200, 255));
+            } else if (colorChoice > 4) {
+              // Blue star
+              this.color = color(random(100, 200), random(150, 255), 255);
+            } else if (colorChoice > 2) {
+              // Green star
+              this.color = color(100, 255, random(100, 200));
+            } else {
+              // Red star
+              this.color = color(255, random(100, 200), 100);
+            }
+            this.maxTrail = floor(random(5, 15));
+            break;
+            
+          case "starsystem":
+            this.size = random(6, 10);
+            // Star systems have multiple colored stars
+            this.color = color(random(200, 255), random(200, 255), random(150, 255));
+            this.secondaryColor = color(random(150, 255), random(150, 255), random(150, 255));
+            this.maxTrail = floor(random(10, 20));
+            this.orbitingStars = floor(random(2, 5));
+            this.orbitAngles = [];
+            for (let i = 0; i < this.orbitingStars; i++) {
+              this.orbitAngles.push(random(TWO_PI));
+            }
+            break;
+            
+          case "galaxy":
+            this.size = random(10, 15);
+            // Galaxies are more colorful
+            this.color = color(random(150, 255), random(150, 255), random(150, 255));
+            this.galaxyType = random(["spiral", "elliptical"]); 
+            this.maxTrail = floor(random(15, 25));
+            this.rotationAngle = random(TWO_PI);
+            this.rotationSpeed = random(0.005, 0.02);
+            break;
+            
+          case "stardust":
+            this.size = random(1, 2);
+            this.color = color(random(200, 255), random(200, 255), random(200, 255), random(100, 200));
+            this.maxTrail = floor(random(3, 8));
+            break;
+        }
+        
+        this.trail = [];
+      }
+      
+      update() {
+        // Add current position to trail
+        this.trail.push(createVector(this.pos.x, this.pos.y));
+        
+        // Keep trail at maximum length
+        if (this.trail.length > this.maxTrail) {
+          this.trail.shift();
+        }
+        
+        // Apply blackhole attraction
+        blackHole.attract(this);
+        
+        // Update velocity and position
+        this.vel.add(this.acc);
+        this.pos.add(this.vel);
+        this.acc.mult(0);
+        
+        // Update rotation for galaxies
+        if (this.type === "galaxy") {
+          this.rotationAngle += this.rotationSpeed;
+        }
+        
+        // Update orbit angles for star systems
+        if (this.type === "starsystem") {
+          for (let i = 0; i < this.orbitingStars; i++) {
+            this.orbitAngles[i] += 0.05 + i * 0.01;
+          }
+        }
+        
+        // Implement relativistic effects as particles approach event horizon
+        let distToBlackHole = p5.Vector.dist(this.pos, blackHole.pos);
+        if (distToBlackHole < blackHole.radius * 5) {
+          // Time dilation effect: particles appear to slow down
+          let timeDilation = map(distToBlackHole, blackHole.radius, blackHole.radius * 5, 0.5, 1);
+          // Simulated gravitational lensing: particles' paths curve more
+          let toBlackHole = p5.Vector.sub(blackHole.pos, this.pos).normalize();
+          let lensing = map(distToBlackHole, blackHole.radius, blackHole.radius * 5, 0.02, 0);
+          this.vel.add(p5.Vector.mult(toBlackHole, lensing * this.vel.mag()));
+        }
+      }
+      
+      applyForce(force) {
+        this.acc.add(force);
+      }
+      
+      show() {
+        // Draw trail
+        noFill();
+        stroke(red(this.color), green(this.color), blue(this.color), 150);
+        strokeWeight(this.size * 0.5);
+        beginShape();
+        for (let i = 0; i < this.trail.length; i++) {
+          // Make trail fade out
+          let alpha = map(i, 0, this.trail.length - 1, 20, 150);
+          stroke(red(this.color), green(this.color), blue(this.color), alpha);
+          vertex(this.trail[i].x, this.trail[i].y);
+        }
+        endShape();
+        
+        switch(this.type) {
+          case "star":
+            // Draw particle
+            fill(this.color);
+            noStroke();
+            ellipse(this.pos.x, this.pos.y, this.size);
+            
+            // Add a small glow
+            fill(red(this.color), green(this.color), blue(this.color), 100);
+            ellipse(this.pos.x, this.pos.y, this.size * 1.5);
+            break;
+            
+          case "starsystem":
+            // Draw central star
+            fill(this.color);
+            noStroke();
+            ellipse(this.pos.x, this.pos.y, this.size);
+            
+            // Add a small glow
+            fill(red(this.color), green(this.color), blue(this.color), 100);
+            ellipse(this.pos.x, this.pos.y, this.size * 1.5);
+            
+            // Draw orbiting stars
+            for (let i = 0; i < this.orbitingStars; i++) {
+              let orbitRadius = this.size * (0.8 + i * 0.4);
+              let x = this.pos.x + cos(this.orbitAngles[i]) * orbitRadius;
+              let y = this.pos.y + sin(this.orbitAngles[i]) * orbitRadius;
+              
+              // Small star
+              let starSize = this.size * 0.3;
+              fill(this.secondaryColor);
+              ellipse(x, y, starSize);
+              
+              // Glow
+              fill(red(this.secondaryColor), green(this.secondaryColor), blue(this.secondaryColor), 80);
+              ellipse(x, y, starSize * 1.5);
+            }
+            break;
+            
+          case "galaxy":
+            // Draw galaxy based on type
+            if (this.galaxyType === "spiral") {
+              // Spiral galaxy
+              for (let i = 0; i < 30; i++) {
+                let angle = this.rotationAngle + i * 0.2;
+                let dist = i * (this.size * 0.1);
+                let x = this.pos.x + cos(angle) * dist;
+                let y = this.pos.y + sin(angle) * dist;
+                
+                // Vary color along the spiral arm
+                let c = color(
+                  lerp(red(this.color), 255, i/30),
+                  lerp(green(this.color), 255, i/30),
+                  lerp(blue(this.color), 255, i/30),
+                  map(i, 0, 30, 200, 50)
+                );
+                
+                fill(c);
+                noStroke();
+                ellipse(x, y, this.size * 0.2);
+                
+                // Second spiral arm
+                let angle2 = this.rotationAngle + i * 0.2 + PI;
+                let x2 = this.pos.x + cos(angle2) * dist;
+                let y2 = this.pos.y + sin(angle2) * dist;
+                ellipse(x2, y2, this.size * 0.2);
+              }
+              
+              // Central bulge
+              fill(255, 250, 220, 180);
+              ellipse(this.pos.x, this.pos.y, this.size * 0.8);
+            } else {
+              // Elliptical galaxy
+              for (let i = 0; i < 5; i++) {
+                let alpha = map(i, 0, 5, 200, 50);
+                let size = map(i, 0, 5, this.size * 0.5, this.size);
+                
+                fill(red(this.color), green(this.color), blue(this.color), alpha);
+                noStroke();
+                push();
+                translate(this.pos.x, this.pos.y);
+                rotate(this.rotationAngle);
+                ellipse(0, 0, size, size * 0.7);
+                pop();
+              }
+            }
+            break;
+            
+          case "stardust":
+            // Draw simple dust particle
+            fill(this.color);
+            noStroke();
+            ellipse(this.pos.x, this.pos.y, this.size);
+            break;
+        }
+      }
+    }
+    
+    function windowResized() {
+      resizeCanvas(windowWidth, windowHeight);
+      blackHole.pos.x = width / 2;
+      blackHole.pos.y = height / 2;
+    }
+  </script>
+</body>
+</html>
